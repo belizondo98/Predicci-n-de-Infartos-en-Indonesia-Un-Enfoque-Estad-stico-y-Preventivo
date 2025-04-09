@@ -1,0 +1,155 @@
+# ========================================
+# PARTE 3: PREPARACIÓN PARA ANÁLISIS PREDICTIVO (OPTIMIZADO)
+# ========================================
+
+set.seed(123)  # Reproducibilidad
+
+# --- 1. Calcular correlaciones con heart_attack ---
+data_corr <- data
+data_corr$heart_attack_num <- ifelse(data_corr$heart_attack == "Yes", 1, 0)
+
+num_vars <- data_corr %>% select(where(is.numeric))
+cor_target <- cor(num_vars, use = "complete.obs", method = "spearman")[, "heart_attack_num"]
+
+# --- 2. Seleccionar las 15 variables numéricas más correlacionadas ---
+top_numeric_vars <- names(sort(abs(cor_target), decreasing = TRUE))
+top_numeric_vars <- top_numeric_vars[!is.na(top_numeric_vars) & top_numeric_vars != "heart_attack_num"]
+top_numeric_vars <- head(top_numeric_vars, 15)
+
+# --- 3. Crear nuevo dataset con solo esas variables y heart_attack ---
+data_model <- data %>% select(all_of(top_numeric_vars), heart_attack)
+
+# --- 4. Dividir en entrenamiento y prueba (80/20) ---
+index <- createDataPartition(data_model$heart_attack, p = 0.8, list = FALSE)
+train_data <- data_model[index, ]
+test_data  <- data_model[-index, ]
+
+# --- 5. Escalar variables numéricas ---
+scaler <- preProcess(train_data[, -ncol(train_data)], method = c("center", "scale"))
+train_scaled <- predict(scaler, train_data[, -ncol(train_data)])
+test_scaled  <- predict(scaler, test_data[, -ncol(test_data)])
+
+# Volver a agregar la variable objetivo
+train_final <- cbind(train_scaled, heart_attack = train_data$heart_attack)
+test_final  <- cbind(test_scaled,  heart_attack = test_data$heart_attack)
+
+
+# ========================================
+# PARTE 4: MODELO PREDICTIVO - RANDOM FOREST
+# ========================================
+
+# Asegúrate de tener la librería cargada
+library(randomForest)
+library(caret)
+
+set.seed(123)
+
+# --- 1. Entrenar modelo Random Forest con menor cantidad de árboles (más rápido) ---
+modelo_rf <- randomForest(
+  heart_attack ~ ., data = train_final,
+  ntree = 100,           # Número de árboles (ajustable)
+  importance = TRUE
+)
+
+# --- 2. Evaluar desempeño en datos de prueba ---
+pred_rf <- predict(modelo_rf, newdata = test_final)
+conf_matrix_rf <- confusionMatrix(pred_rf, test_final$heart_attack)
+print(conf_matrix_rf)
+
+# --- 3. Importancia de variables ---
+# Calcular importancia de variables como data.frame
+importance_df <- as.data.frame(importance(modelo_rf))
+importance_df$Variable <- rownames(importance_df)
+
+# Seleccionar las 15 más importantes
+top_vars <- importance_df %>%
+  arrange(desc(MeanDecreaseGini)) %>%
+  head(15)
+
+# Gráfico limpio con ggplot2
+library(ggplot2)
+
+ggplot(top_vars, aes(x = reorder(Variable, MeanDecreaseGini), y = MeanDecreaseGini)) +
+  geom_col(fill = "darkgreen") +
+  coord_flip() +
+  theme_minimal() +
+  labs(title = "Top 15 Variables Más Importantes - Random Forest",
+       x = "Variable", y = "Importancia (MeanDecreaseGini)")
+
+# --- 4. Calcular AUC y curva ROC ---
+library(pROC)
+
+probs_rf <- predict(modelo_rf, newdata = test_final, type = "prob")
+roc_rf <- roc(test_final$heart_attack, probs_rf[, "Yes"])
+
+plot(roc_rf, col = "darkgreen", lwd = 2, main = "Curva ROC - Random Forest")
+auc(roc_rf)
+
+
+# ========================================
+# PARTE 5: MODELO PREDICTIVO - XGBOOST
+# ========================================
+
+library(xgboost)
+library(pROC)
+
+# --- 1. Convertir datos a matrices para XGBoost ---
+xgb_train <- as.matrix(train_final[, -ncol(train_final)])
+xgb_test  <- as.matrix(test_final[, -ncol(test_final)])
+
+# Convertir etiquetas a 0 y 1
+label_train <- ifelse(train_final$heart_attack == "Yes", 1, 0)
+label_test  <- ifelse(test_final$heart_attack == "Yes", 1, 0)
+
+# --- 2. Crear DMatrix para eficiencia ---
+dtrain <- xgb.DMatrix(data = xgb_train, label = label_train)
+dtest  <- xgb.DMatrix(data = xgb_test, label = label_test)
+
+# --- 3. Entrenar el modelo ---
+set.seed(123)
+xgb_model <- xgboost(
+  data = dtrain,
+  objective = "binary:logistic",
+  nrounds = 100,
+  eval_metric = "auc",
+  verbose = 0
+)
+
+# --- 4. Predicciones y evaluación ---
+pred_probs <- predict(xgb_model, newdata = dtest)
+pred_class <- ifelse(pred_probs > 0.5, 1, 0)
+
+# Curva ROC y AUC
+roc_xgb <- roc(label_test, pred_probs)
+plot(roc_xgb, col = "blue", lwd = 2, main = "Curva ROC - XGBoost")
+auc(roc_xgb)
+
+# Matriz de confusión
+confusionMatrix(factor(pred_class, levels = c(0, 1)),
+                factor(label_test, levels = c(0, 1)))
+
+
+# Comparación de curvas ROC entre Random Forest y XGBoost
+plot(roc_rf, col = "darkgreen", lwd = 2, main = "Comparación de Curvas ROC")
+plot(roc_xgb, col = "blue", add = TRUE, lwd = 2)
+abline(a = 0, b = 1, lty = 2, col = "gray")
+legend("bottomright", legend = c("Random Forest", "XGBoost"),
+       col = c("darkgreen", "blue"), lwd = 2)
+
+cat("AUC Random Forest:", auc(roc_rf), "\n")
+cat("AUC XGBoost:", auc(roc_xgb), "\n")
+
+
+# ========================================
+# PARTE 6: MODELO BASE - REGRESIÓN LOGÍSTICA
+# ========================================
+
+library(caret)
+library(pROC)
+
+set.seed(123)
+
+# --- 1. Entrenar modelo de regresión logística ---
+modelo_log <- glm(
+  heart_attack ~ ., data = train_final,
+  family =
