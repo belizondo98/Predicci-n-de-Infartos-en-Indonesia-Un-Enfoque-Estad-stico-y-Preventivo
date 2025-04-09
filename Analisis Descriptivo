@@ -1,0 +1,62 @@
+# ========================================
+# PARTE 2: ANÁLISIS EXPLORATORIO DE DATOS
+# ========================================
+
+# --- 1. Histograma de variables numéricas ---
+numeric_vars <- data %>% select(where(is.numeric))
+
+numeric_long <- numeric_vars %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "valor")
+
+ggplot(numeric_long, aes(x = valor)) +
+  geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  facet_wrap(~ variable, scales = "free", ncol = 5) +
+  theme_minimal() +
+  labs(title = "Distribución de variables numéricas")
+
+# --- Definir variables categóricas y transformarlas a formato largo ---
+cat_vars <- data %>% 
+  select(where(is.factor)) %>% 
+  select(-heart_attack)
+
+cat_long <- cat_vars %>%
+  pivot_longer(cols = everything(), names_to = "variable", values_to = "categoria")
+
+# --- Crear el gráfico de barras para variables categóricas ---
+plot_cat_bar <- ggplot(cat_long, aes(x = categoria)) +
+  geom_bar(fill = "coral", color = "black") +
+  facet_wrap(~ variable, scales = "free", ncol = 4) +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.background = element_rect(fill = "white", color = NA),
+    strip.background = element_rect(fill = "white", color = "black"),
+    strip.text = element_text(color = "black", size = 10),
+    axis.text = element_text(color = "black", size = 7),
+    axis.title = element_text(color = "black"),
+    plot.title = element_text(color = "black", face = "bold"),
+    axis.text.x = element_text(angle = 30, hjust = 1)
+  ) +
+  labs(title = "Frecuencia de categorías por variable categórica",
+       x = "Categoría", y = "Frecuencia")
+
+# --- Mostrar el gráfico de categorías ---
+plot_cat_bar
+
+# --- 2. Boxplots para detección de outliers ---
+ggplot(numeric_long, aes(x = variable, y = valor)) +
+  geom_boxplot(fill = "lightblue") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Boxplots de variables numéricas")
+
+# --- 3. Comparación de variables numéricas según infarto ---
+data %>%
+  select(where(is.numeric), heart_attack) %>%
+  pivot_longer(cols = -heart_attack, names_to = "variable", values_to = "valor") %>%
+  ggplot(aes(x = heart_attack, y = valor, fill = heart_attack)) +
+  geom_boxplot() +
+  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  theme_minimal() +
+  labs(title = "Variables numéricas según presencia de infarto",
+       x = "Infarto", y = "Valor")
