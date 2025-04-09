@@ -54,7 +54,7 @@ numeric_long <- numeric_vars %>%
 
 ggplot(numeric_long, aes(x = valor)) +
   geom_histogram(bins = 30, fill = "steelblue", color = "white") +
-  facet_wrap(~ variable, scales = "free", ncol = 3) +
+  facet_wrap(~ variable, scales = "free", ncol = 5) +
   theme_minimal() +
   labs(title = "Distribución de variables numéricas")
 
@@ -84,9 +84,8 @@ plot_cat_bar <- ggplot(cat_long, aes(x = categoria)) +
   labs(title = "Frecuencia de categorías por variable categórica",
        x = "Categoría", y = "Frecuencia")
 
-# --- Exportar a PNG ---
-ggsave("histograma_categoricas.png", plot = plot_cat_bar,
-       width = 16, height = 10, dpi = 300, bg = "white")
+# --- Mostrar el gráfico ---
+plot_cat_bar
 
 # --- 2. Boxplots para detección de outliers ---
 ggplot(numeric_long, aes(x = variable, y = valor)) +
@@ -114,30 +113,59 @@ cat_vars <- data %>%
 
 
 # ========================================
-# PARTE 3: PREPARACIÓN PARA ANÁLISIS PREDICTIVO
+# INSTALACIÓN Y CARGA DE LIBRERÍAS
 # ========================================
 
-# --- 1. Cargar librerías necesarias ---
+# Función para instalar si no está instalada
+instalar_si_falta <- function(paquete) {
+  if (!require(paquete, character.only = TRUE)) {
+    install.packages(paquete, dependencies = TRUE)
+    library(paquete, character.only = TRUE)
+  }
+}
+
+# Lista de paquetes necesarios
+paquetes <- c("caret", "xgboost", "randomForest", "ggplot2", "pROC", "dplyr")
+
+# Instalar y cargar cada paquete
+sapply(paquetes, instalar_si_falta)
+
+# Cargar explícitamente (por claridad en el script)
 library(caret)
 library(xgboost)
 library(randomForest)
+library(ggplot2)
+library(pROC)
+library(dplyr)
+
+# ========================================
+# PARTE 3: PREPARACIÓN PARA ANÁLISIS PREDICTIVO (OPTIMIZADO)
+# ========================================
 
 set.seed(123)  # Reproducibilidad
 
-# --- 2. Convertir variables categóricas a dummies ---
-# Excluimos la variable objetivo
-dummy_vars <- dummyVars(heart_attack ~ ., data = data)
-data_dummies <- predict(dummy_vars, newdata = data) %>% as.data.frame()
+# --- 1. Calcular correlaciones con heart_attack ---
+data_corr <- data
+data_corr$heart_attack_num <- ifelse(data_corr$heart_attack == "Yes", 1, 0)
 
-# Agregar de nuevo la variable objetivo
-data_model <- cbind(data_dummies, heart_attack = data$heart_attack)
+num_vars <- data_corr %>% select(where(is.numeric))
+cor_target <- cor(num_vars, use = "complete.obs", method = "spearman")[, "heart_attack_num"]
 
-# --- 3. Dividir en entrenamiento y prueba (80/20) ---
+# --- 2. Seleccionar las 15 variables numéricas más correlacionadas ---
+top_numeric_vars <- names(sort(abs(cor_target), decreasing = TRUE))
+top_numeric_vars <- top_numeric_vars[!is.na(top_numeric_vars) & top_numeric_vars != "heart_attack_num"]
+top_numeric_vars <- head(top_numeric_vars, 15)
+
+# --- 3. Crear nuevo dataset con solo esas variables y heart_attack ---
+data_model <- data %>%
+  select(all_of(top_numeric_vars), heart_attack)
+
+# --- 4. Dividir en entrenamiento y prueba (80/20) ---
 index <- createDataPartition(data_model$heart_attack, p = 0.8, list = FALSE)
 train_data <- data_model[index, ]
 test_data  <- data_model[-index, ]
 
-# --- 4. Escalar variables numéricas ---
+# --- 5. Escalar variables numéricas ---
 scaler <- preProcess(train_data[, -ncol(train_data)], method = c("center", "scale"))
 
 train_scaled <- predict(scaler, train_data[, -ncol(train_data)])
@@ -146,6 +174,7 @@ test_scaled  <- predict(scaler, test_data[, -ncol(test_data)])
 # Volver a agregar la variable objetivo
 train_final <- cbind(train_scaled, heart_attack = train_data$heart_attack)
 test_final  <- cbind(test_scaled,  heart_attack = test_data$heart_attack)
+
 
 # ========================================
 # PARTE 4: MODELO PREDICTIVO - RANDOM FOREST
